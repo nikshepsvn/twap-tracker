@@ -217,7 +217,7 @@ let STATE = {
   tab: 'flow',
   // flow
   orders: [], rows: [], unit: 'usd', sortKey: 'netUsd', sortDir: -1, search: '', status: 'all',
-  windowH: 'all', activeOnly: false, statuses: ['all'], selected: null,
+  windowH: 'all', activeOnly: false, inclErrored: false, statuses: ['all'], selected: null,
   // markets
   perpMkts: [], spotMkts: [], mktKind: 'perp', mktSort: 'oiUsd', mktDir: -1, mktSearch: '',
   // meta
@@ -327,6 +327,7 @@ function aggregate() {
   const m = new Map(); let kept=0, live=0;
   for (const o of STATE.orders) {
     if (STATE.status!=='all' && o.ended!==STATE.status) continue;
+    if (STATE.status==='all' && !STATE.inclErrored && o.ended==='error') continue;  // errored TWAPs often barely filled; exclude from flow by default
     if (now - o.time > winMs) continue;
     const isLive = o.ended==='active' && now<=o.endTime;
     if (STATE.activeOnly && !isLive) continue;
@@ -390,12 +391,14 @@ function renderToolbar(){
        <div class="seg" id="windowSeg">${['1','6','24','all'].map(w=>`<button data-win="${w}" class="${String(STATE.windowH)===w?'active':''}">${w==='all'?'All':w+'h'}</button>`).join('')}</div>
        <select id="statusFilter">${STATE.statuses.map(s=>`<option value="${s}" ${STATE.status===s?'selected':''}>${s==='all'?'All statuses':s}</option>`).join('')}</select>
        <label class="chk"><input type="checkbox" id="activeOnly" ${STATE.activeOnly?'checked':''}/> Active now</label>
+       <label class="chk" title="Errored TWAPs terminated early and often barely filled"><input type="checkbox" id="inclErrored" ${STATE.inclErrored?'checked':''}/> Include errored</label>
        <div class="spacer"></div><span class="rowcount" id="rowcount"></span>`;
     document.getElementById('search').oninput = e=>{ STATE.search=e.target.value; renderFlow(); };
     document.getElementById('unitSeg').onclick = e=>{ if(!e.target.dataset.unit)return; STATE.unit=e.target.dataset.unit; STATE.sortKey=STATE.unit==='usd'?'netUsd':'netSz'; renderToolbar(); renderFlow(); };
     document.getElementById('windowSeg').onclick = e=>{ if(!e.target.dataset.win)return; STATE.windowH=e.target.dataset.win==='all'?'all':+e.target.dataset.win; aggregate(); };
     document.getElementById('statusFilter').onchange = e=>{ STATE.status=e.target.value; aggregate(); };
     document.getElementById('activeOnly').onchange = e=>{ STATE.activeOnly=e.target.checked; aggregate(); };
+    document.getElementById('inclErrored').onchange = e=>{ STATE.inclErrored=e.target.checked; aggregate(); };
   } else {
     tb.innerHTML =
       searchBox('mktSearch', STATE.mktSearch, 'Filter market…') +
@@ -513,7 +516,11 @@ function wireSort(tab){
 function renderFoot(tab){
   const el=document.getElementById('foot');
   if (tab==='flow'){
-    el.innerHTML = `Feed: ${STATE.span} · window ${STATE.windowH==='all'?'all':'last '+STATE.windowH+'h'}${STATE.activeOnly?' · active-now only':''} · <span class="livedot">●</span> live = TWAP executing now · Fund 1h = perp funding rate · prices are current marks (notional).<br>data: <a href="https://hypurrscan.io" target="_blank" rel="noopener">hypurrscan</a> + <a href="https://hyperliquid.xyz" target="_blank" rel="noopener">Hyperliquid</a> · generated ${STATE.generatedAt}`;
+    const nErr = STATE.orders.filter(o=>o.ended==='error').length;
+    const errNote = nErr ? (STATE.inclErrored
+      ? ` · <span class="down">including ${nErr} errored</span> (terminated early — stated size likely overstates fills)`
+      : ` · ${nErr} errored TWAPs hidden (terminated early; toggle “Include errored” to add them)`) : '';
+    el.innerHTML = `Feed: ${STATE.span} · window ${STATE.windowH==='all'?'all':'last '+STATE.windowH+'h'}${STATE.activeOnly?' · active-now only':''}${errNote} · <span class="livedot">●</span> live = TWAP executing now · Fund 1h = perp funding rate · prices are current marks (notional).<br>data: <a href="https://hypurrscan.io" target="_blank" rel="noopener">hypurrscan</a> + <a href="https://hyperliquid.xyz" target="_blank" rel="noopener">Hyperliquid</a> · generated ${STATE.generatedAt}`;
   } else {
     el.innerHTML = `OI = open interest (notional) · Fund 1h = current hourly funding · Fund APR = annualized · 24h volume & change from Hyperliquid asset contexts. Spot market cap = circulating supply × price.<br>data: <a href="https://hyperliquid.xyz" target="_blank" rel="noopener">Hyperliquid</a> · generated ${STATE.generatedAt}`;
   }
