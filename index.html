@@ -293,6 +293,10 @@ async function loadAll() {
       vol: c.dayNtlVlm!=null?parseFloat(c.dayNtlVlm):null,
       mcap:(supply!=null&&mark!=null)?supply*mark:null };
   }).filter(m=> m.vol);
+  // dedupe by base token, keep the highest-volume quote pair
+  const bestByTok = new Map();
+  for (const m of STATE.spotMkts) { const e=bestByTok.get(m.name); if(!e || (m.vol||0)>(e.vol||0)) bestByTok.set(m.name,m); }
+  STATE.spotMkts = [...bestByTok.values()];
 
   STATE.generatedMs = Date.now(); STATE.generatedAt = new Date().toLocaleString();
   aggregate();
