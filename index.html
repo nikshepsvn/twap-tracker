@@ -50,8 +50,8 @@
   /* live stat strip */
   .strip { display: flex; align-items: center; gap: 0; overflow-x: auto; flex: 1; }
   .stat { display: flex; flex-direction: column; justify-content: center; padding: 0 15px; border-right: 1px solid var(--border); white-space: nowrap; min-width: max-content; }
-  .stat .k { font-size: 9px; color: var(--faint); text-transform: uppercase; letter-spacing: .6px; font-weight: 600; }
-  .stat .v { font-size: 13px; font-weight: 600; font-family: var(--mono); margin-top: 1px; }
+  .stat .k { font-size: 8.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .7px; font-weight: 700; }
+  .stat .v { font-size: 13.5px; font-weight: 700; font-family: var(--mono); margin-top: 2px; letter-spacing: -.2px; }
   .topbar-right { display: flex; align-items: center; gap: 12px; padding: 0 14px; margin-left: auto; border-left: 1px solid var(--border); }
   .updated { color: var(--faint); font-size: 11px; white-space: nowrap; }
   .updated b { color: var(--muted); font-weight: 600; }
@@ -99,9 +99,9 @@
   thead th:hover { color: var(--text); }
   thead th.nosort { cursor: default; }
   thead th .ar { color: var(--accent); font-size: 8px; }
-  tbody tr { border-bottom: 1px solid var(--border); }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background .08s; }
   tbody tr.clk { cursor: pointer; }
-  tbody tr:hover { background: var(--panel); }
+  tbody tr:hover { background: var(--panel2); box-shadow: inset 2px 0 0 var(--accent); }
   td { font-size: 12px; }
   td.mono, th.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
   .tok { font-weight: 600; }
@@ -163,6 +163,20 @@
   .pfill { height: 100%; border-radius: 3px; transition: width .3s; }
   .pmeta { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--faint); margin-top: 5px; }
   .pmeta .rem { color: var(--buy); font-family: var(--mono); font-weight: 600; }
+  /* modal sections: chart + cross-venue */
+  .msec { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .mseclbl { font-size: 9.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .6px; font-weight: 700; margin-bottom: 9px; }
+  .mseclbl.pad { padding: 12px 16px 0; }
+  .mseclbl .dim { text-transform: none; letter-spacing: 0; font-weight: 500; font-family: var(--mono); }
+  .chartbox { background: var(--bg); border: 1px solid var(--border); border-radius: 7px; height: 96px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .chartbox.load, .chartbox.empty2 { color: var(--faint); font-size: 11px; }
+  .spark { width: 100%; height: 100%; display: block; }
+  .vtable { width: 100%; border-collapse: collapse; }
+  .vtable td { padding: 5px 0; font-size: 12px; text-align: right; border-bottom: 1px solid var(--border); }
+  .vtable tr:last-child td { border-bottom: 0; }
+  .vtable td.ven { text-align: left; color: var(--text); font-weight: 600; }
+  .noflow { padding: 18px 16px; color: var(--faint); font-size: 12px; }
+  .noflow b { color: var(--muted); }
 
   @media (max-width: 760px) {
     .strip .stat:nth-child(n+3) { display: none; }
@@ -212,13 +226,15 @@ let STATE = {
 let autoTimer = null, autoNextMs = 0;
 
 async function loadAll() {
-  const [twaps, perpMC, spotMC, perpDexs, mids] = await Promise.all([
+  const [twaps, perpMC, spotMC, perpDexs, mids, predFund] = await Promise.all([
     fetch(HS).then(r=>r.json()),
     post({ type:'metaAndAssetCtxs' }),
     post({ type:'spotMetaAndAssetCtxs' }),
     post({ type:'perpDexs' }),
     post({ type:'allMids' }),
+    post({ type:'predictedFundings' }).catch(()=>[]),
   ]);
+  STATE.predFunding = {}; (predFund||[]).forEach(([coin,venues])=>{ STATE.predFunding[coin]=venues; });
   const perpMeta = perpMC[0], perpCtxs = perpMC[1];
   const spotMeta = spotMC[0], spotCtxs = spotMC[1];
 
@@ -297,6 +313,9 @@ async function loadAll() {
   const bestByTok = new Map();
   for (const m of STATE.spotMkts) { const e=bestByTok.get(m.name); if(!e || (m.vol||0)>(e.vol||0)) bestByTok.set(m.name,m); }
   STATE.spotMkts = [...bestByTok.values()];
+  // name → market lookups for the detail modal
+  STATE.perpByName = {}; STATE.perpMkts.forEach(m=> STATE.perpByName[m.name]=m);
+  STATE.spotByName = {}; STATE.spotMkts.forEach(m=> STATE.spotByName[m.name]=m);
 
   STATE.generatedMs = Date.now(); STATE.generatedAt = new Date().toLocaleString();
   aggregate();
@@ -413,7 +432,7 @@ function renderFlow(){
       const bar=`<span class="nb" style="width:${w}px;background:${net>=0?'var(--buy)':'var(--sell)'}"></span>`;
       const kb=r.kind!=='perp'?`<span class="badge">${r.kind}</span>`:'';
       const fund=r.funding!=null?`<span class="${r.funding>=0?'up':'down'}">${fmtPct(r.funding,4)}</span>`:'<span class="dim">—</span>';
-      return `<tr class="clk" data-token="${r.name.replace(/"/g,'&quot;')}">
+      return `<tr class="clk" data-token="${r.name.replace(/"/g,'&quot;')}" data-kind="${r.kind}">
         <td class="tok">${r.name}${kb}</td>
         <td class="mono">${r.n}</td>
         <td class="mono ${r.live?'livedot':'dim'}">${r.live?'●'+r.live:'—'}</td>
@@ -429,7 +448,7 @@ function renderFlow(){
   document.getElementById('content').innerHTML = `<div class="tablewrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   const rc=document.getElementById('rowcount'); if(rc) rc.textContent = `${rows.length} tokens · ${STATE.kept} orders`;
   wireSort('flow');
-  document.querySelectorAll('tbody tr[data-token]').forEach(tr=> tr.onclick=()=>openToken(tr.dataset.token));
+  document.querySelectorAll('tbody tr[data-token]').forEach(tr=> tr.onclick=()=>openToken(tr.dataset.token, tr.dataset.kind));
   renderFoot('flow');
 }
 
@@ -450,7 +469,7 @@ function renderMarkets(){
     head=`<tr><th data-key="name">Market</th>${col('mark','Mark')}${col('chg','24h %')}${col('oiUsd','Open Interest')}${col('vol','24h Volume')}${col('fund','Fund 1h')}${col('fundApr','Fund APR')}</tr>`;
     body=rows.map(m=>{
       const chg=m.chg, ow=Math.round((m.oiUsd||0)/maxOi*90), vw=Math.round((m.vol||0)/maxVol*90);
-      return `<tr>
+      return `<tr class="clk" data-token="${m.name.replace(/"/g,'&quot;')}" data-kind="perp">
         <td class="tok">${m.name}<span class="dim" style="font-weight:400;margin-left:6px">${m.lev}×</span></td>
         <td class="mono">${fmtPx(m.mark)}</td>
         <td class="mono ${chg==null?'dim':chg>=0?'up':'down'}">${fmtPct(chg)}</td>
@@ -465,7 +484,7 @@ function renderMarkets(){
     head=`<tr><th data-key="name">Token</th>${col('mark','Price')}${col('chg','24h %')}${col('vol','24h Volume')}${col('mcap','Market Cap')}</tr>`;
     body=rows.map(m=>{
       const chg=m.chg, vw=Math.round((m.vol||0)/maxVol*90), mw=Math.round((m.mcap||0)/maxMc*90);
-      return `<tr>
+      return `<tr class="clk" data-token="${m.name.replace(/"/g,'&quot;')}" data-kind="spot">
         <td class="tok">${m.name}</td>
         <td class="mono">${fmtPx(m.mark)}</td>
         <td class="mono ${chg==null?'dim':chg>=0?'up':'down'}">${fmtPct(chg)}</td>
@@ -478,6 +497,7 @@ function renderMarkets(){
   document.getElementById('content').innerHTML = `<div class="tablewrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   const rc=document.getElementById('rowcount'); if(rc) rc.textContent = `${rows.length} ${perp?'perps':'spot pairs'}`;
   wireSort('markets');
+  document.querySelectorAll('tbody tr[data-token]').forEach(tr=> tr.onclick=()=>openToken(tr.dataset.token, tr.dataset.kind));
   renderFoot('markets');
 }
 
@@ -510,43 +530,102 @@ function updateClock(){
 // ===== token detail modal =====
 function fmtDur(ms){ const m=Math.round(ms/60000); if(m<60)return m+'m'; const h=Math.floor(m/60),mm=m%60; return mm?`${h}h ${mm}m`:`${h}h`; }
 function relTime(ms){ const m=Math.round((Date.now()-ms)/60000); if(m<1)return'just now'; if(m<60)return m+'m ago'; const h=Math.floor(m/60); if(h<24)return h+'h '+(m%60)+'m ago'; return Math.floor(h/24)+'d ago'; }
-function openToken(name){ STATE.selected=name; document.getElementById('backdrop').classList.add('open'); document.getElementById('modal').classList.add('open'); renderDetail(); }
+const candleCache = {};
+async function getCandles(coin){
+  if(candleCache[coin]!==undefined) return candleCache[coin];
+  const now=Date.now();
+  try { const d=await post({type:'candleSnapshot', req:{coin, interval:'1h', startTime:now-24*3.6e6, endTime:now}}); candleCache[coin]=Array.isArray(d)?d:[]; }
+  catch(e){ candleCache[coin]=[]; }
+  return candleCache[coin];
+}
+function sparkSvg(candles){
+  if(!candles || candles.length<2) return null;
+  const cl=candles.map(c=>parseFloat(c.c));
+  const min=Math.min(...cl), max=Math.max(...cl), rng=(max-min)||1;
+  const W=600,H=96,p=6;
+  const pts=cl.map((v,i)=>`${(p+i/(cl.length-1)*(W-2*p)).toFixed(1)},${(p+(1-(v-min)/rng)*(H-2*p)).toFixed(1)}`);
+  const up=cl[cl.length-1]>=cl[0];
+  return { hi:max, lo:min, up, svg:`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="spark"><polygon points="${p},${H-p} ${pts.join(' ')} ${W-p},${H-p}" fill="${up?'var(--buy-dim)':'var(--sell-dim)'}"/><polyline points="${pts.join(' ')}" fill="none" stroke="${up?'var(--buy)':'var(--sell)'}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>` };
+}
+const VENUE={HlPerp:'Hyperliquid',BinPerp:'Binance',BybitPerp:'Bybit'};
+function crossVenue(coin){
+  const v=STATE.predFunding && STATE.predFunding[coin];
+  if(!v || !v.length) return '';
+  const rows=v.map(([name,info])=>{ if(!info) return '';
+    const r=parseFloat(info.fundingRate), hrs=info.fundingIntervalHours||1, apr=r*(24/hrs)*365;
+    return `<tr><td class="ven">${VENUE[name]||name}</td><td class="mono ${r>=0?'up':'down'}">${fmtPct(r,4)}<span class="dim"> /${hrs}h</span></td><td class="mono ${apr>=0?'up':'down'}">${fmtPct(apr,1)} <span class="dim">APR</span></td></tr>`;
+  }).join('');
+  return `<div class="msec"><div class="mseclbl">Cross-venue funding</div><table class="vtable"><tbody>${rows}</tbody></table></div>`;
+}
+function openToken(name, kind){
+  STATE.selected=name; STATE.selKind=kind||null;
+  document.getElementById('backdrop').classList.add('open'); document.getElementById('modal').classList.add('open');
+  document.getElementById('modal').scrollTop=0;
+  const coin = kind==='spot' ? (STATE.spotByName[name]&&STATE.spotByName[name].pair) : (kind==='perp'?name:null);
+  renderDetail();
+  if(coin) getCandles(coin).then(()=>{ if(STATE.selected===name) renderDetail(); });
+}
 function closeModal(){ STATE.selected=null; document.getElementById('backdrop').classList.remove('open'); document.getElementById('modal').classList.remove('open'); }
 function renderDetail(){
   if(!STATE.selected) return;
-  const now=Date.now();
-  const orders=STATE.orders.filter(o=>o.name===STATE.selected).sort((a,b)=>b.time-a.time);
-  if(!orders.length){ closeModal(); return; }
+  const name=STATE.selected, kind=STATE.selKind, now=Date.now();
+  const pm=STATE.perpByName[name], sm=STATE.spotByName[name];
+  const orders=STATE.orders.filter(o=>o.name===name).sort((a,b)=>b.time-a.time);
   const live=orders.filter(o=>o.ended==='active'&&now<=o.endTime);
-  const px=orders[0].price, kind=orders[0].kind, fund=orders[0].funding;
+  const px = pm?pm.mark : sm?sm.mark : (orders[0]?orders[0].price:null);
   const netSz=orders.reduce((s,o)=>s+(o.buy?o.size:-o.size),0);
   const netUsd=px!=null?netSz*px:null;
+  const badge = kind&&kind!=='perp'?`<span class="badge">${kind}</span>`:'';
   const item=(k,v)=>`<div class="i"><div class="k">${k}</div><b>${v}</b></div>`;
-  const head=`<div class="mhead"><h2>${STATE.selected}</h2>${kind&&kind!=='perp'?`<span class="badge">${kind}</span>`:''}<button class="x" onclick="closeModal()">×</button></div>
-    <div class="msum">
-      ${item('Orders',orders.length)}
-      ${item('Live now',`<span class="livedot">${live.length}</span>`)}
-      ${item('Mark',fmtPx(px))}
-      ${fund!=null?item('Funding 1h',`<span class="${fund>=0?'up':'down'}">${fmtPct(fund,4)}</span>`):''}
-      ${item('Net flow',`<span class="${netUsd>=0?'buy':'sell'}">${netUsd!=null?fmtUsd(netUsd):(netSz>=0?'+':'')+fmt(netSz,1)}</span>`)}
-    </div>`;
-  const body=orders.map(o=>{
-    const dur=o.endTime-o.time, isLive=o.ended==='active'&&now<=o.endTime;
-    const prog=Math.max(0,Math.min(1,(now-o.time)/dur)), usd=o.price!=null?o.size*o.price:null;
-    let rem,bc;
-    if(isLive){ rem=`<span class="rem">${fmtDur(o.endTime-now)} left</span>`; bc=o.buy?'var(--buy)':'var(--sell)'; }
-    else if(o.ended==='active'){ rem='finishing…'; bc='var(--muted)'; }
-    else { rem=o.ended==='canceled'?'canceled':'ended (error)'; bc='var(--border2)'; }
-    const pct=o.ended==='active'?prog:1;
-    return `<div class="order"><div class="otop">
-        <span class="side ${o.buy?'b':'s'}">${o.buy?'BUY':'SELL'}</span>
-        <span class="sz">${fmt(o.size,o.size<10?2:1)}${usd!=null?` · $${fmt(usd)}`:''}</span>
-        <span class="st ${o.ended}">${o.ended}</span>
-        <span class="ago">${relTime(o.time)} · ${fmtDur(dur)} TWAP</span>
-      </div><div class="prog"><div class="pbar"><div class="pfill" style="width:${(pct*100).toFixed(1)}%;background:${bc}"></div></div>
-        <div class="pmeta"><span>${(pct*100).toFixed(0)}% elapsed</span>${rem}</div></div></div>`;
-  }).join('');
-  document.getElementById('modal').innerHTML = head + body;
+
+  let stats='';
+  if(pm){
+    stats = item('Mark',fmtPx(pm.mark))+item('24h',`<span class="${pm.chg>=0?'up':'down'}">${fmtPct(pm.chg)}</span>`)
+      +item('Open interest',fmtUsdA(pm.oiUsd))+item('24h volume',fmtUsdA(pm.vol))
+      +item('Funding 1h',`<span class="${pm.fund>=0?'up':'down'}">${fmtPct(pm.fund,4)}</span>`)
+      +item('Funding APR',`<span class="${pm.fundApr>=0?'up':'down'}">${fmtPct(pm.fundApr,1)}</span>`)
+      +item('Max lev',pm.lev+'×');
+  } else if(sm){
+    stats = item('Price',fmtPx(sm.mark))+item('24h',`<span class="${sm.chg>=0?'up':'down'}">${fmtPct(sm.chg)}</span>`)
+      +item('24h volume',fmtUsdA(sm.vol))+item('Market cap',fmtUsdA(sm.mcap));
+  } else { stats = item('Mark',fmtPx(px)); }
+  if(orders.length){ stats += item('TWAP orders',orders.length)+item('Live now',`<span class="livedot">${live.length}</span>`)
+      +item('TWAP net',`<span class="${netUsd>=0?'buy':'sell'}">${netUsd!=null?fmtUsd(netUsd):(netSz>=0?'+':'')+fmt(netSz,1)}</span>`); }
+
+  const head=`<div class="mhead"><h2>${name}</h2>${badge}<button class="x" onclick="closeModal()">×</button></div><div class="msum">${stats}</div>`;
+
+  const coin = kind==='spot' ? (sm&&sm.pair) : (kind==='perp'?name:null);
+  let chart='';
+  if(coin){
+    const c=candleCache[coin];
+    if(c===undefined) chart=`<div class="msec"><div class="mseclbl">24h price</div><div class="chartbox load"><span class="spin"></span></div></div>`;
+    else { const s=sparkSvg(c);
+      chart = s ? `<div class="msec"><div class="mseclbl">24h price <span class="dim">· ${fmtPx(s.lo)} – ${fmtPx(s.hi)} · <span class="${s.up?'up':'down'}">${fmtPct(c.length?parseFloat(c[c.length-1].c)/parseFloat(c[0].o)-1:0)}</span></span></div><div class="chartbox">${s.svg}</div></div>`
+                : `<div class="msec"><div class="mseclbl">24h price</div><div class="chartbox empty2">no candle data</div></div>`; }
+  }
+  const cv = kind==='perp' ? crossVenue(name) : '';
+
+  let ordersHtml;
+  if(orders.length){
+    ordersHtml = `<div class="mseclbl pad">TWAP orders · ${orders.length}</div>` + orders.map(o=>{
+      const dur=o.endTime-o.time, isLive=o.ended==='active'&&now<=o.endTime;
+      const prog=Math.max(0,Math.min(1,(now-o.time)/dur)), usd=o.price!=null?o.size*o.price:null;
+      let rem,bc;
+      if(isLive){ rem=`<span class="rem">${fmtDur(o.endTime-now)} left</span>`; bc=o.buy?'var(--buy)':'var(--sell)'; }
+      else if(o.ended==='active'){ rem='finishing…'; bc='var(--muted)'; }
+      else { rem=o.ended==='canceled'?'canceled':'ended (error)'; bc='var(--border2)'; }
+      const pct=o.ended==='active'?prog:1;
+      return `<div class="order"><div class="otop">
+          <span class="side ${o.buy?'b':'s'}">${o.buy?'BUY':'SELL'}</span>
+          <span class="sz">${fmt(o.size,o.size<10?2:1)}${usd!=null?` · $${fmt(usd)}`:''}</span>
+          <span class="st ${o.ended}">${o.ended}</span>
+          <span class="ago">${relTime(o.time)} · ${fmtDur(dur)} TWAP</span>
+        </div><div class="prog"><div class="pbar"><div class="pfill" style="width:${(pct*100).toFixed(1)}%;background:${bc}"></div></div>
+          <div class="pmeta"><span>${(pct*100).toFixed(0)}% elapsed</span>${rem}</div></div></div>`;
+    }).join('');
+  } else { ordersHtml = `<div class="noflow">No TWAP orders for <b>${name}</b> in the current feed.</div>`; }
+
+  document.getElementById('modal').innerHTML = head + chart + cv + ordersHtml;
 }
 setInterval(()=>{ if(STATE.selected) renderDetail(); updateClock(); }, 1000);
 
