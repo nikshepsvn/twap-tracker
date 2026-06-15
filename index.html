@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Hyperliquid Terminal · TWAP Flow + Markets</title>
 <meta name="description" content="Dense Hyperliquid terminal — live TWAP order flow, open interest, funding and volume across every market." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070a10'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%232ebd96'/%3E%3C/svg%3E" />
 <style>
   :root {
     --bg: #06080d; --bg2: #0a0d14; --panel: #0e1219; --panel2: #131822; --panel3: #1a212e;
@@ -240,9 +241,10 @@ async function loadAll() {
 
   // builder-dex metas + mids (skip index 0 = main dex)
   const dexList = perpDexs.map((d,i)=>({i, name: d && d.name})).filter(d=>d.name);
-  const dexData = await Promise.all(dexList.map(async d => ({
-    ...d, meta: await post({ type:'meta', dex: d.name }), mids: await post({ type:'allMids', dex: d.name }),
-  })));
+  const dexData = await Promise.all(dexList.map(async d => {
+    const [meta, mids] = await Promise.all([ post({ type:'meta', dex: d.name }), post({ type:'allMids', dex: d.name }) ]);
+    return { ...d, meta, mids };
+  }));
 
   // ---- resolvers + perp ctx by name (for funding in flow table) ----
   const perpName = {}, perpCtxByName = {};
@@ -317,6 +319,7 @@ async function loadAll() {
   STATE.perpByName = {}; STATE.perpMkts.forEach(m=> STATE.perpByName[m.name]=m);
   STATE.spotByName = {}; STATE.spotMkts.forEach(m=> STATE.spotByName[m.name]=m);
 
+  Object.keys(candleCache).forEach(k=>delete candleCache[k]);  // drop stale sparkline candles so they refetch
   STATE.generatedMs = Date.now(); STATE.generatedAt = new Date().toLocaleString();
   aggregate();
 }
@@ -356,6 +359,8 @@ function fmtUsdA(n){ if(n==null)return'—'; const a=Math.abs(n);
 function fmtPx(p){ if(p==null)return'—'; if(p>=1000)return'$'+p.toLocaleString('en-US',{maximumFractionDigits:0});
   return '$'+p.toLocaleString('en-US',{maximumFractionDigits:p<1?6:2}); }
 function fmtPct(x,dp=2){ if(x==null)return'—'; return (x>=0?'+':'')+(x*100).toFixed(dp)+'%'; }
+// escape API-supplied strings (token / builder names are permissionless) before injecting into HTML
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // ===== render dispatch =====
 function render(){
@@ -363,6 +368,7 @@ function render(){
   renderToolbar();
   if (STATE.tab==='flow') renderFlow(); else renderMarkets();
   updateClock();
+  savePrefs();
 }
 
 function renderStrip(){
@@ -381,7 +387,7 @@ function renderStrip(){
 
 function renderToolbar(){
   const tb = document.getElementById('toolbar');
-  const searchBox = (id,val,ph)=>`<div class="search-box"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input type="text" id="${id}" placeholder="${ph}" value="${val.replace(/"/g,'&quot;')}" /></div>`;
+  const searchBox = (id,val,ph)=>`<div class="search-box"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input type="text" id="${id}" placeholder="${ph}" value="${esc(val)}" /></div>`;
   if (STATE.tab==='flow'){
     tb.innerHTML =
       searchBox('search', STATE.search, 'Filter token…') +
@@ -435,8 +441,8 @@ function renderFlow(){
       const bar=`<span class="nb" style="width:${w}px;background:${net>=0?'var(--buy)':'var(--sell)'}"></span>`;
       const kb=r.kind!=='perp'?`<span class="badge">${r.kind}</span>`:'';
       const fund=r.funding!=null?`<span class="${r.funding>=0?'up':'down'}">${fmtPct(r.funding,4)}</span>`:'<span class="dim">—</span>';
-      return `<tr class="clk" data-token="${r.name.replace(/"/g,'&quot;')}" data-kind="${r.kind}">
-        <td class="tok">${r.name}${kb}</td>
+      return `<tr class="clk" data-token="${esc(r.name)}" data-kind="${r.kind}">
+        <td class="tok">${esc(r.name)}${kb}</td>
         <td class="mono">${r.n}</td>
         <td class="mono ${r.live?'livedot':'dim'}">${r.live?'●'+r.live:'—'}</td>
         <td class="mono"><span class="buy">${r.nb}</span><span class="dim">/</span><span class="sell">${r.ns}</span></td>
@@ -472,8 +478,8 @@ function renderMarkets(){
     head=`<tr><th data-key="name">Market</th>${col('mark','Mark')}${col('chg','24h %')}${col('oiUsd','Open Interest')}${col('vol','24h Volume')}${col('fund','Fund 1h')}${col('fundApr','Fund APR')}</tr>`;
     body=rows.map(m=>{
       const chg=m.chg, ow=Math.round((m.oiUsd||0)/maxOi*90), vw=Math.round((m.vol||0)/maxVol*90);
-      return `<tr class="clk" data-token="${m.name.replace(/"/g,'&quot;')}" data-kind="perp">
-        <td class="tok">${m.name}<span class="dim" style="font-weight:400;margin-left:6px">${m.lev}×</span></td>
+      return `<tr class="clk" data-token="${esc(m.name)}" data-kind="perp">
+        <td class="tok">${esc(m.name)}<span class="dim" style="font-weight:400;margin-left:6px">${m.lev}×</span></td>
         <td class="mono">${fmtPx(m.mark)}</td>
         <td class="mono ${chg==null?'dim':chg>=0?'up':'down'}">${fmtPct(chg)}</td>
         <td class="mono cellbar"><span class="fill" style="width:${ow}%"></span><span>${fmtUsdA(m.oiUsd)}</span></td>
@@ -487,8 +493,8 @@ function renderMarkets(){
     head=`<tr><th data-key="name">Token</th>${col('mark','Price')}${col('chg','24h %')}${col('vol','24h Volume')}${col('mcap','Market Cap')}</tr>`;
     body=rows.map(m=>{
       const chg=m.chg, vw=Math.round((m.vol||0)/maxVol*90), mw=Math.round((m.mcap||0)/maxMc*90);
-      return `<tr class="clk" data-token="${m.name.replace(/"/g,'&quot;')}" data-kind="spot">
-        <td class="tok">${m.name}</td>
+      return `<tr class="clk" data-token="${esc(m.name)}" data-kind="spot">
+        <td class="tok">${esc(m.name)}</td>
         <td class="mono">${fmtPx(m.mark)}</td>
         <td class="mono ${chg==null?'dim':chg>=0?'up':'down'}">${fmtPct(chg)}</td>
         <td class="mono cellbar"><span class="fill" style="width:${vw}%"></span><span>${fmtUsdA(m.vol)}</span></td>
@@ -560,7 +566,7 @@ function crossVenue(coin){
   if(!v || !v.length) return '';
   const rows=v.map(([name,info])=>{ if(!info) return '';
     const r=parseFloat(info.fundingRate), hrs=info.fundingIntervalHours||1, apr=r*(24/hrs)*365;
-    return `<tr><td class="ven">${VENUE[name]||name}</td><td class="mono ${r>=0?'up':'down'}">${fmtPct(r,4)}<span class="dim"> /${hrs}h</span></td><td class="mono ${apr>=0?'up':'down'}">${fmtPct(apr,1)} <span class="dim">APR</span></td></tr>`;
+    return `<tr><td class="ven">${esc(VENUE[name]||name)}</td><td class="mono ${r>=0?'up':'down'}">${fmtPct(r,4)}<span class="dim"> /${hrs}h</span></td><td class="mono ${apr>=0?'up':'down'}">${fmtPct(apr,1)} <span class="dim">APR</span></td></tr>`;
   }).join('');
   return `<div class="msec"><div class="mseclbl">Cross-venue funding</div><table class="vtable"><tbody>${rows}</tbody></table></div>`;
 }
@@ -599,7 +605,7 @@ function renderDetail(){
   if(orders.length){ stats += item('TWAP orders',orders.length)+item('Live now',`<span class="livedot">${live.length}</span>`)
       +item('TWAP net',`<span class="${netUsd>=0?'buy':'sell'}">${netUsd!=null?fmtUsd(netUsd):(netSz>=0?'+':'')+fmt(netSz,1)}</span>`); }
 
-  const head=`<div class="mhead"><h2>${name}</h2>${badge}<button class="x" onclick="closeModal()">×</button></div><div class="msum">${stats}</div>`;
+  const head=`<div class="mhead"><h2>${esc(name)}</h2>${badge}<button class="x" onclick="closeModal()">×</button></div><div class="msum">${stats}</div>`;
 
   const coin = kind==='spot' ? (sm&&sm.pair) : (kind==='perp'?name:null);
   let chart='';
@@ -630,9 +636,12 @@ function renderDetail(){
         </div><div class="prog"><div class="pbar"><div class="pfill" style="width:${(pct*100).toFixed(1)}%;background:${bc}"></div></div>
           <div class="pmeta"><span>${(pct*100).toFixed(0)}% elapsed</span>${rem}</div></div></div>`;
     }).join('');
-  } else { ordersHtml = `<div class="noflow">No TWAP orders for <b>${name}</b> in the current feed.</div>`; }
+  } else { ordersHtml = `<div class="noflow">No TWAP orders for <b>${esc(name)}</b> in the current feed.</div>`; }
 
-  document.getElementById('modal').innerHTML = head + chart + cv + ordersHtml;
+  const modalEl = document.getElementById('modal');
+  const sc = modalEl.scrollTop;                 // preserve scroll across the 1s live re-render
+  modalEl.innerHTML = head + chart + cv + ordersHtml;
+  modalEl.scrollTop = sc;
 }
 setInterval(()=>{ if(STATE.selected) renderDetail(); updateClock(); }, 1000);
 
@@ -640,6 +649,12 @@ setInterval(()=>{ if(STATE.selected) renderDetail(); updateClock(); }, 1000);
 function showSkeleton(){
   document.getElementById('content').innerHTML = `<div class="loadline"><span class="spin"></span> Fetching markets, TWAPs &amp; funding…</div>${'<div class="skelrow"></div>'.repeat(12)}`;
 }
+
+// ===== prefs persistence =====
+const PREFS_KEY='hlterm.prefs';
+const PREF_FIELDS=['tab','unit','windowH','mktKind','activeOnly','inclErrored','auto','sortKey','sortDir','mktSort','mktDir'];
+function savePrefs(){ try{ const o={}; PREF_FIELDS.forEach(k=>o[k]=STATE[k]); localStorage.setItem(PREFS_KEY, JSON.stringify(o)); }catch(e){} }
+function loadPrefs(){ try{ const p=JSON.parse(localStorage.getItem(PREFS_KEY)||'{}'); PREF_FIELDS.forEach(k=>{ if(p[k]!==undefined) STATE[k]=p[k]; }); }catch(e){} }
 
 // ===== wiring =====
 document.querySelectorAll('.tab').forEach(t=> t.onclick=()=>{
@@ -655,7 +670,7 @@ document.addEventListener('keydown', e=>{
 
 function setupAuto(){ if(autoTimer)clearInterval(autoTimer); autoNextMs=0;
   if(STATE.auto){ autoNextMs=Date.now()+REFRESH_MS; autoTimer=setInterval(()=>{ autoNextMs=Date.now()+REFRESH_MS; refresh(); },REFRESH_MS); } }
-document.getElementById('autoRefresh').onchange=e=>{ STATE.auto=e.target.checked; setupAuto(); updateClock(); };
+document.getElementById('autoRefresh').onchange=e=>{ STATE.auto=e.target.checked; setupAuto(); updateClock(); savePrefs(); };
 
 async function refresh(){
   const btn=document.getElementById('refresh'); btn.disabled=true; btn.classList.add('spinning');
@@ -665,6 +680,11 @@ async function refresh(){
   finally { btn.disabled=false; btn.classList.remove('spinning'); if(STATE.auto) autoNextMs=Date.now()+REFRESH_MS; }
 }
 document.getElementById('refresh').onclick=refresh;
+
+// restore saved prefs + reflect in chrome that isn't re-rendered by render()
+loadPrefs();
+document.querySelectorAll('.tab').forEach(t=> t.classList.toggle('active', t.dataset.tab===STATE.tab));
+const arEl=document.getElementById('autoRefresh'); arEl.checked=STATE.auto; if(STATE.auto) setupAuto();
 refresh();
 </script>
 </body>
